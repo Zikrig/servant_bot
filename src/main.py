@@ -123,6 +123,8 @@ async def telegram_webhook(
         elif "edited_business_message" in update:
             # Edited updates are still useful for diagnostics in business chats.
             await bot.handle_message(update["edited_business_message"], source="edited_business_message")
+        elif "business_connection" in update:
+            await bot.handle_business_connection(update["business_connection"])
         else:
             logger.info("Unhandled update type: update_id=%s keys=%s", update_id, update_keys)
     except Exception as exc:  # noqa: BLE001

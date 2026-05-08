@@ -216,12 +216,32 @@ class BotService:
         telegram_user_id: int,
         *,
         business_connection_id: str | None = None,
+        show_panel: bool = False,
     ) -> None:
-        await self.storage.get_or_create_user(telegram_user_id)
+        user = await self.storage.get_or_create_user(telegram_user_id)
         await self.telegram.send_message(
             chat_id,
-            "Бот активирован. Напишите сообщение — отвечу по активному сценарию.",
+            "Бот активирован. Управляйте сценариями через панель ниже.",
             business_connection_id=business_connection_id,
+        )
+        if show_panel:
+            await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
+
+    async def handle_business_connection(self, payload: dict) -> None:
+        business_connection_id = payload.get("id") or payload.get("business_connection_id")
+        user = payload.get("user") or {}
+        owner_telegram_user_id = user.get("id")
+        if not business_connection_id or not owner_telegram_user_id:
+            self.logger.warning("business_connection update missing required fields: keys=%s", sorted(payload.keys()))
+            return
+        await self.storage.upsert_business_connection_owner(
+            business_connection_id=str(business_connection_id),
+            owner_telegram_user_id=int(owner_telegram_user_id),
+        )
+        self.logger.info(
+            "Business connection mapped: id=%s owner_tg_id=%s",
+            business_connection_id,
+            owner_telegram_user_id,
         )
 
     async def handle_message(self, message: dict, *, source: str = "message") -> None:
@@ -229,6 +249,7 @@ class BotService:
         chat_id = chat["id"]
         chat_type = (chat.get("type") or "").lower()
         is_private = chat_type == "private"
+        is_business_source = source in {"business_message", "edited_business_message"}
         business_connection_id = message.get("business_connection_id")
         from_user = message.get("from", {})
         if from_user.get("is_bot"):
@@ -261,26 +282,32 @@ class BotService:
             is_bot=bool(from_user.get("is_bot")),
         )
 
-        user = await self.storage.get_or_create_user(telegram_user_id)
+        owner_telegram_user_id: int | None = None
+        if is_business_source and business_connection_id:
+            owner_telegram_user_id = await self.storage.get_business_connection_owner(str(business_connection_id))
+
+        actor_telegram_user_id = owner_telegram_user_id or telegram_user_id
+        user = await self.storage.get_or_create_user(actor_telegram_user_id)
         normalized_text = text.lower()
 
         # Handle startup/panel commands before Guest-mode mention gating.
         if normalized_text in {"/start", "/start@" + self.bot_username}:
             await self.handle_start(
                 chat_id,
-                telegram_user_id,
+                actor_telegram_user_id,
                 business_connection_id=business_connection_id,
+                show_panel=is_private and not is_business_source,
             )
             return
         if normalized_text in {"/panel", "/panel@" + self.bot_username}:
-            if is_private:
+            if not is_business_source:
+                await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
+            else:
                 await self.telegram.send_message(
                     chat_id,
-                    "В личке панель отключена. Просто напишите сообщение — отвечу по активному сценарию.",
+                    "Для business-переписки панель отключена. Использую активный сценарий для ответов.",
                     business_connection_id=business_connection_id,
                 )
-            else:
-                await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
             return
 
         # Stateful scenario creation should work without mention/reply gating.
@@ -308,9 +335,25 @@ class BotService:
             await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
             return
 
-        # In managed chats, react only to explicit mentions.
+        # Ordinary direct chat with bot is a control channel: always show panel.
+        if is_private and not is_business_source:
+            await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
+            return
+
+        # Business flow:
+        # - owner message -> answer only on mention
+        # - interlocutor message -> answer without mention
         is_mention = self._is_mention_message(text)
-        if not is_private and not is_mention:
+        if is_business_source:
+            is_owner_message = owner_telegram_user_id is not None and telegram_user_id == owner_telegram_user_id
+            if is_owner_message and not is_mention:
+                self.logger.info(
+                    "Ignoring owner business message without mention: chat_id=%s owner_tg_id=%s",
+                    chat_id,
+                    owner_telegram_user_id,
+                )
+                return
+        elif not is_private and not is_mention:
             self.logger.info(
                 "Ignoring %s update without mention: chat_id=%s chat_type=%s text=%r",
                 source,
@@ -345,11 +388,17 @@ class BotService:
 
         enabled = await self.storage.get_enabled_scenario(user["id"])
         if not enabled:
-            await self.telegram.send_message(
-                chat_id,
-                "Нет активного сценария. Активируйте сценарий в управляющем чате и вернитесь сюда.",
-                business_connection_id=business_connection_id,
-            )
+            if is_business_source:
+                self.logger.info(
+                    "Skipping business reply: no active scenario for owner_tg_id=%s",
+                    actor_telegram_user_id,
+                )
+            else:
+                await self.telegram.send_message(
+                    chat_id,
+                    "Нет активного сценария. Активируйте сценарий в управляющем чате и вернитесь сюда.",
+                    business_connection_id=business_connection_id,
+                )
             return
 
         reply_text = None

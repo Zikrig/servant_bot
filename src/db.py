@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_id_id
 ON chat_messages(chat_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS business_connections (
+    business_connection_id TEXT PRIMARY KEY,
+    owner_telegram_user_id INTEGER NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 

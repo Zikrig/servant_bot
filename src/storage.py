@@ -256,3 +256,31 @@ class Storage:
             items = [dict(row) for row in rows]
             items.reverse()
             return items
+
+    async def upsert_business_connection_owner(
+        self,
+        *,
+        business_connection_id: str,
+        owner_telegram_user_id: int,
+    ) -> None:
+        async with aiosqlite.connect(self.db_path) as conn:
+            await conn.execute(
+                """
+                INSERT INTO business_connections (business_connection_id, owner_telegram_user_id, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(business_connection_id) DO UPDATE SET
+                    owner_telegram_user_id = excluded.owner_telegram_user_id,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (business_connection_id, owner_telegram_user_id),
+            )
+            await conn.commit()
+
+    async def get_business_connection_owner(self, business_connection_id: str) -> int | None:
+        async with aiosqlite.connect(self.db_path) as conn:
+            row = await self._fetchone(
+                conn,
+                "SELECT owner_telegram_user_id FROM business_connections WHERE business_connection_id = ?",
+                (business_connection_id,),
+            )
+            return int(row[0]) if row else None
