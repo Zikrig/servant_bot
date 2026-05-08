@@ -257,6 +257,37 @@ class BotService:
             await self.telegram.send_message(chat_id, f"Сценарий «{draft_title}» добавлен.")
             await self._render_panel(chat_id, user_id)
             return True
+
+        if state["pending_action"] == "await_prompt_edit":
+            scenario_id = state.get("selected_scenario_id")
+            if not scenario_id:
+                await self.storage.update_chat_state(
+                    user_id,
+                    pending_action=None,
+                    selected_scenario_id=None,
+                )
+                await self.telegram.send_message(chat_id, "Не удалось определить сценарий для редактирования. Откройте карточку еще раз.")
+                return True
+
+            try:
+                updated = await self.scenarios.update_scenario_prompt(user_id, int(scenario_id), text.strip())
+            except ValueError as exc:
+                await self.telegram.send_message(chat_id, f"Не удалось обновить промпт: {exc}")
+                return True
+
+            await self.storage.update_chat_state(
+                user_id,
+                pending_action=None,
+                draft_title=None,
+                delete_candidate_id=None,
+                selected_scenario_id=int(scenario_id) if updated else None,
+            )
+            if updated:
+                await self.telegram.send_message(chat_id, "Промпт сценария обновлен.")
+            else:
+                await self.telegram.send_message(chat_id, "Сценарий не найден.")
+            await self._render_panel(chat_id, user_id)
+            return True
         return False
 
     async def handle_start(
@@ -452,6 +483,30 @@ class BotService:
             await self._send_scenario_prompt_file(
                 chat_id=chat_id,
                 scenario=scenario,
+            )
+            return
+
+        if data.startswith("sc:edit:"):
+            try:
+                scenario_id = int(data.split(":")[-1])
+            except ValueError:
+                await self.telegram.send_message(chat_id, "Некорректный идентификатор сценария.")
+                return
+            scenario = await self.storage.get_scenario(user_id, scenario_id)
+            if not scenario:
+                await self.telegram.send_message(chat_id, "Сценарий не найден.")
+                await self.storage.update_chat_state(user_id, selected_scenario_id=None, pending_action=None)
+                await self._render_panel(chat_id, user_id)
+                return
+            await self.storage.update_chat_state(
+                user_id,
+                pending_action="await_prompt_edit",
+                selected_scenario_id=scenario_id,
+                delete_candidate_id=None,
+            )
+            await self.telegram.send_message(
+                chat_id,
+                "Отправьте новый полный текст промпта для этого сценария следующим сообщением.",
             )
             return
 

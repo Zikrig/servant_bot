@@ -86,6 +86,15 @@ class Storage:
             await conn.commit()
             return int(cur.lastrowid)
 
+    async def update_scenario_prompt(self, user_id: int, scenario_id: int, system_prompt: str) -> bool:
+        async with aiosqlite.connect(self.db_path) as conn:
+            cur = await conn.execute(
+                "UPDATE scenarios SET system_prompt = ? WHERE user_id = ? AND id = ?",
+                (system_prompt, user_id, scenario_id),
+            )
+            await conn.commit()
+            return cur.rowcount > 0
+
     async def delete_scenario(self, user_id: int, scenario_id: int) -> bool:
         async with aiosqlite.connect(self.db_path) as conn:
             cur = await conn.execute(

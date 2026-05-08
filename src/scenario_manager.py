@@ -38,6 +38,14 @@ class ScenarioManager:
     async def delete_scenario(self, user_id: int, scenario_id: int) -> bool:
         return await self.storage.delete_scenario(user_id, scenario_id)
 
+    async def update_scenario_prompt(self, user_id: int, scenario_id: int, system_prompt: str) -> bool:
+        system_prompt = system_prompt.strip()
+        if not system_prompt:
+            raise ValueError("Промпт сценария не может быть пустым.")
+        if len(system_prompt) > self.limits.max_prompt_len:
+            raise ValueError(f"Промпт слишком длинный (макс. {self.limits.max_prompt_len}).")
+        return await self.storage.update_scenario_prompt(user_id, scenario_id, system_prompt)
+
     async def toggle_scenario(self, user_id: int, scenario_id: int) -> bool:
         scenario = await self.storage.get_scenario(user_id, scenario_id)
         if not scenario:

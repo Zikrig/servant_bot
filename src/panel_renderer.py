@@ -30,6 +30,7 @@ class PanelRenderer:
         toggle_text = "Выключить" if scenario["is_enabled"] else "Включить"
         rows = [
             [{"text": toggle_text, "callback_data": f"sc:toggle:{scenario['id']}"}],
+            [{"text": "Редактировать", "callback_data": f"sc:edit:{scenario['id']}"}],
             [{"text": "Удалить", "callback_data": f"sc:delete:{scenario['id']}"}],
             [{"text": "⬅ Назад к списку", "callback_data": "panel:back"}],
         ]
