@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,6 +28,14 @@ class Settings(BaseSettings):
     max_scenarios_per_user: int = Field(default=20, alias="MAX_SCENARIOS_PER_USER")
     max_scenario_title_len: int = Field(default=64, alias="MAX_SCENARIO_TITLE_LEN")
     max_scenario_prompt_len: int = Field(default=2000, alias="MAX_SCENARIO_PROMPT_LEN")
+    prompt_wrapper_file: str = Field(default="prompts/prompt_wrapper.txt", alias="PROMPT_WRAPPER_FILE")
 
 
 settings = Settings()
+
+
+def load_prompt_wrapper_text() -> str:
+    path = Path(settings.prompt_wrapper_file)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parent.parent / path
+    return path.read_text(encoding="utf-8").strip()

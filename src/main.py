@@ -6,7 +6,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from src.bot_service import BotService
-from src.config import EVOLINK_BASE_URL, TELEGRAM_API_BASE, settings
+from src.config import EVOLINK_BASE_URL, TELEGRAM_API_BASE, load_prompt_wrapper_text, settings
 from src.db import init_db
 from src.evolink_client import EvolinkClient
 from src.panel_renderer import PanelRenderer
@@ -52,6 +52,7 @@ bot = BotService(
     evolink=evolink,
     telegram=telegram,
     bot_username=settings.telegram_bot_username,
+    prompt_wrapper_text=load_prompt_wrapper_text(),
 )
 
 app = FastAPI(title="Servant Bot", version="0.1.0")

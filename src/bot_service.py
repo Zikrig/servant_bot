@@ -20,6 +20,7 @@ class BotService:
         evolink: EvolinkClient,
         telegram: TelegramClient,
         bot_username: str | None,
+        prompt_wrapper_text: str,
     ) -> None:
         self.storage = storage
         self.scenarios = scenarios
@@ -27,6 +28,7 @@ class BotService:
         self.evolink = evolink
         self.telegram = telegram
         self.bot_username = bot_username.lstrip("@").lower() if bot_username else ""
+        self.prompt_wrapper_text = prompt_wrapper_text.strip()
         self.logger = logging.getLogger(__name__)
 
     def set_bot_username(self, bot_username: str) -> None:
@@ -97,6 +99,13 @@ class BotService:
             "Текущий запрос пользователя:\n"
             f"{user_text}"
         )
+
+    def _compose_system_prompt(self, scenario_prompt: str) -> str:
+        if not self.prompt_wrapper_text:
+            return scenario_prompt
+        if not scenario_prompt.strip():
+            return self.prompt_wrapper_text
+        return f"{self.prompt_wrapper_text}\n\n{scenario_prompt.strip()}"
 
     @staticmethod
     def _extract_reply_text(message: dict) -> str | None:
@@ -415,7 +424,10 @@ class BotService:
             guest_query_id,
         )
         try:
-            result = await self.evolink.generate(system_prompt=enabled["system_prompt"], user_text=llm_user_text)
+            result = await self.evolink.generate(
+                system_prompt=self._compose_system_prompt(enabled["system_prompt"]),
+                user_text=llm_user_text,
+            )
             answer = result["text"] or "Не удалось сгенерировать ответ."
         except Exception as exc:  # noqa: BLE001
             self.logger.exception("LLM generation failed: %s", exc)
