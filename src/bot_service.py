@@ -289,6 +289,18 @@ class BotService:
         actor_telegram_user_id = owner_telegram_user_id or telegram_user_id
         user = await self.storage.get_or_create_user(actor_telegram_user_id)
         normalized_text = text.lower()
+        is_mention = self._is_mention_message(text)
+        is_reply_to_bot = self._is_reply_to_bot(message)
+
+        if is_business_source:
+            is_owner_message = owner_telegram_user_id is not None and telegram_user_id == owner_telegram_user_id
+            if is_owner_message and not (is_mention or is_reply_to_bot):
+                self.logger.info(
+                    "Ignoring owner business message without mention/reply: chat_id=%s owner_tg_id=%s",
+                    chat_id,
+                    owner_telegram_user_id,
+                )
+                return
 
         # Handle startup/panel commands before Guest-mode mention gating.
         if normalized_text in {"/start", "/start@" + self.bot_username}:
@@ -343,18 +355,7 @@ class BotService:
         # Business flow:
         # - owner message -> answer only on mention OR reply-to-bot
         # - interlocutor message -> answer without mention
-        is_mention = self._is_mention_message(text)
-        is_reply_to_bot = self._is_reply_to_bot(message)
-        if is_business_source:
-            is_owner_message = owner_telegram_user_id is not None and telegram_user_id == owner_telegram_user_id
-            if is_owner_message and not (is_mention or is_reply_to_bot):
-                self.logger.info(
-                    "Ignoring owner business message without mention/reply: chat_id=%s owner_tg_id=%s",
-                    chat_id,
-                    owner_telegram_user_id,
-                )
-                return
-        elif not is_private and not is_mention:
+        if not is_business_source and not is_private and not is_mention:
             self.logger.info(
                 "Ignoring %s update without mention: chat_id=%s chat_type=%s text=%r",
                 source,
