@@ -196,3 +196,63 @@ class Storage:
                 ),
             )
             await conn.commit()
+
+    async def append_chat_message(
+        self,
+        *,
+        chat_id: int,
+        message_id: int | None,
+        sender_label: str,
+        text: str,
+        is_bot: bool,
+    ) -> None:
+        async with aiosqlite.connect(self.db_path) as conn:
+            await conn.execute(
+                """
+                INSERT INTO chat_messages (chat_id, message_id, sender_label, text, is_bot)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (chat_id, message_id, sender_label, text, 1 if is_bot else 0),
+            )
+            # Keep rolling history bounded per chat.
+            await conn.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE chat_id = ?
+                  AND id NOT IN (
+                      SELECT id
+                      FROM chat_messages
+                      WHERE chat_id = ?
+                      ORDER BY id DESC
+                      LIMIT 200
+                  )
+                """,
+                (chat_id, chat_id),
+            )
+            await conn.commit()
+
+    async def get_recent_chat_messages(
+        self,
+        *,
+        chat_id: int,
+        limit: int = 10,
+        exclude_message_id: int | None = None,
+    ) -> list[dict]:
+        query = """
+            SELECT message_id, sender_label, text, is_bot, created_at
+            FROM chat_messages
+            WHERE chat_id = ?
+        """
+        params: tuple = (chat_id,)
+        if exclude_message_id is not None:
+            query += " AND (message_id IS NULL OR message_id != ?)"
+            params = (chat_id, exclude_message_id)
+        query += " ORDER BY id DESC LIMIT ?"
+        params = (*params, limit)
+
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            rows = await self._fetchall(conn, query, params)
+            items = [dict(row) for row in rows]
+            items.reverse()
+            return items
