@@ -98,6 +98,11 @@ class BotService:
             f"{user_text}"
         )
 
+    @staticmethod
+    def _scenario_filename(title: str) -> str:
+        safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", title.strip()) or "scenario"
+        return f"{safe[:48]}.txt"
+
     async def _send_llm_answer(
         self,
         *,
@@ -124,8 +129,19 @@ class BotService:
     async def _render_panel(self, chat_id: int, user_id: int, *, business_connection_id: str | None = None) -> None:
         scenario_items = await self.storage.list_scenarios(user_id)
         state = await self.storage.get_chat_state(user_id)
-        text = self.panel.build_panel_text(scenario_items)
-        markup = self.panel.build_panel_markup(scenario_items, state["delete_candidate_id"])
+        selected_scenario_id = state.get("selected_scenario_id")
+        selected_scenario = None
+        if selected_scenario_id is not None:
+            selected_scenario = await self.storage.get_scenario(user_id, selected_scenario_id)
+            if selected_scenario is None:
+                await self.storage.update_chat_state(user_id, selected_scenario_id=None)
+
+        if selected_scenario:
+            text = self.panel.build_scenario_card_text(selected_scenario)
+            markup = self.panel.build_scenario_card_markup(selected_scenario)
+        else:
+            text = self.panel.build_panel_text(scenario_items)
+            markup = self.panel.build_panel_markup(scenario_items, state["delete_candidate_id"])
         panel_message_id = state["panel_message_id"]
 
         if panel_message_id:
@@ -149,6 +165,21 @@ class BotService:
         )
         await self.storage.update_chat_state(user_id, panel_message_id=sent["message_id"])
 
+    async def _send_scenario_prompt_file(
+        self,
+        *,
+        chat_id: int,
+        scenario: dict,
+        business_connection_id: str | None = None,
+    ) -> None:
+        await self.telegram.send_text_document(
+            chat_id=chat_id,
+            filename=self._scenario_filename(scenario["title"]),
+            text=scenario["system_prompt"],
+            caption=f"Полный текст сценария: {scenario['title']}",
+            business_connection_id=business_connection_id,
+        )
+
     async def _handle_stateful_input(
         self,
         chat_id: int,
@@ -164,6 +195,7 @@ class BotService:
                 pending_action="await_prompt",
                 draft_title=text.strip(),
                 delete_candidate_id=None,
+                selected_scenario_id=None,
             )
             await self.telegram.send_message(
                 chat_id,
@@ -177,7 +209,12 @@ class BotService:
         if state["pending_action"] == "await_prompt":
             draft_title = (state.get("draft_title") or "").strip()
             if not draft_title:
-                await self.storage.update_chat_state(user_id, pending_action="await_title", draft_title=None)
+                await self.storage.update_chat_state(
+                    user_id,
+                    pending_action="await_title",
+                    draft_title=None,
+                    selected_scenario_id=None,
+                )
                 await self.telegram.send_message(
                     chat_id,
                     "Нужен заголовок сценария. Отправьте название еще раз.",
@@ -200,6 +237,7 @@ class BotService:
                 pending_action=None,
                 draft_title=None,
                 delete_candidate_id=None,
+                selected_scenario_id=None,
             )
             await self.telegram.send_message(
                 chat_id,
@@ -225,6 +263,7 @@ class BotService:
             business_connection_id=business_connection_id,
         )
         if show_panel:
+            await self.storage.update_chat_state(user["id"], selected_scenario_id=None)
             await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
 
     async def handle_business_connection(self, payload: dict) -> None:
@@ -285,6 +324,14 @@ class BotService:
         owner_telegram_user_id: int | None = None
         if is_business_source and business_connection_id:
             owner_telegram_user_id = await self.storage.get_business_connection_owner(str(business_connection_id))
+            self.logger.info(
+                "Business message metadata: connection_id=%s from_id=%s mapped_owner_id=%s sender_chat_id=%s has_sender_business_bot=%s",
+                business_connection_id,
+                telegram_user_id,
+                owner_telegram_user_id,
+                (message.get("sender_chat") or {}).get("id"),
+                bool(message.get("sender_business_bot")),
+            )
 
         actor_telegram_user_id = owner_telegram_user_id or telegram_user_id
         user = await self.storage.get_or_create_user(actor_telegram_user_id)
@@ -293,12 +340,27 @@ class BotService:
         is_reply_to_bot = self._is_reply_to_bot(message)
 
         if is_business_source:
+            if owner_telegram_user_id is None and not (is_mention or is_reply_to_bot):
+                self.logger.info(
+                    "Ignoring business message without owner mapping and without mention/reply: chat_id=%s connection_id=%s from_id=%s",
+                    chat_id,
+                    business_connection_id,
+                    telegram_user_id,
+                )
+                return
             is_owner_message = owner_telegram_user_id is not None and telegram_user_id == owner_telegram_user_id
             if is_owner_message and not (is_mention or is_reply_to_bot):
                 self.logger.info(
                     "Ignoring owner business message without mention/reply: chat_id=%s owner_tg_id=%s",
                     chat_id,
                     owner_telegram_user_id,
+                )
+                return
+            if normalized_text.startswith("/"):
+                self.logger.info(
+                    "Ignoring command in business chat: chat_id=%s text=%r",
+                    chat_id,
+                    normalized_text[:120],
                 )
                 return
 
@@ -312,14 +374,8 @@ class BotService:
             )
             return
         if normalized_text in {"/panel", "/panel@" + self.bot_username}:
-            if not is_business_source:
-                await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
-            else:
-                await self.telegram.send_message(
-                    chat_id,
-                    "Для business-переписки панель отключена. Использую активный сценарий для ответов.",
-                    business_connection_id=business_connection_id,
-                )
+            await self.storage.update_chat_state(user["id"], selected_scenario_id=None)
+            await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
             return
 
         # Stateful scenario creation should work without mention/reply gating.
@@ -338,6 +394,7 @@ class BotService:
                 pending_action=None,
                 draft_title=None,
                 delete_candidate_id=None,
+                selected_scenario_id=None,
             )
             await self.telegram.send_message(
                 chat_id,
@@ -371,10 +428,11 @@ class BotService:
             if is_private:
                 await self.telegram.send_message(
                     chat_id,
-                    "В личке панель отключена. Просто напишите сообщение — отвечу по активному сценарию.",
+                    "Откройте карточки сценариев кнопками на панели.",
                     business_connection_id=business_connection_id,
                 )
             else:
+                await self.storage.update_chat_state(user["id"], selected_scenario_id=None)
                 await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
             return
 
@@ -458,6 +516,7 @@ class BotService:
                 pending_action="await_title",
                 draft_title=None,
                 delete_candidate_id=None,
+                selected_scenario_id=None,
             )
             await self.telegram.send_message(
                 chat_id,
@@ -467,13 +526,47 @@ class BotService:
             return
 
         if data == "panel:refresh":
-            await self.storage.update_chat_state(user_id, delete_candidate_id=None)
+            await self.storage.update_chat_state(user_id, delete_candidate_id=None, selected_scenario_id=None)
+            await self._render_panel(chat_id, user_id, business_connection_id=business_connection_id)
+            return
+
+        if data == "panel:back":
+            await self.storage.update_chat_state(user_id, selected_scenario_id=None, delete_candidate_id=None)
             await self._render_panel(chat_id, user_id, business_connection_id=business_connection_id)
             return
 
         if data == "sc:deln":
-            await self.storage.update_chat_state(user_id, delete_candidate_id=None)
+            await self.storage.update_chat_state(user_id, delete_candidate_id=None, selected_scenario_id=None)
             await self._render_panel(chat_id, user_id, business_connection_id=business_connection_id)
+            return
+
+        if data.startswith("sc:view:"):
+            try:
+                scenario_id = int(data.split(":")[-1])
+            except ValueError:
+                await self.telegram.send_message(
+                    chat_id,
+                    "Некорректный идентификатор сценария.",
+                    business_connection_id=business_connection_id,
+                )
+                return
+            scenario = await self.storage.get_scenario(user_id, scenario_id)
+            if not scenario:
+                await self.telegram.send_message(
+                    chat_id,
+                    "Сценарий не найден.",
+                    business_connection_id=business_connection_id,
+                )
+                await self.storage.update_chat_state(user_id, selected_scenario_id=None)
+                await self._render_panel(chat_id, user_id, business_connection_id=business_connection_id)
+                return
+            await self.storage.update_chat_state(user_id, selected_scenario_id=scenario_id, delete_candidate_id=None)
+            await self._render_panel(chat_id, user_id, business_connection_id=business_connection_id)
+            await self._send_scenario_prompt_file(
+                chat_id=chat_id,
+                scenario=scenario,
+                business_connection_id=business_connection_id,
+            )
             return
 
         if data.startswith("sc:toggle:"):
@@ -493,7 +586,7 @@ class BotService:
                     "Сценарий не найден.",
                     business_connection_id=business_connection_id,
                 )
-            await self.storage.update_chat_state(user_id, delete_candidate_id=None)
+            await self.storage.update_chat_state(user_id, delete_candidate_id=None, selected_scenario_id=scenario_id)
             await self._render_panel(chat_id, user_id, business_connection_id=business_connection_id)
             return
 
@@ -511,7 +604,7 @@ class BotService:
             await self._render_panel(chat_id, user_id, business_connection_id=business_connection_id)
             return
 
-        if data.startswith("sc:dely:"):
+        if data.startswith("sc:delete:") or data.startswith("sc:dely:"):
             try:
                 scenario_id = int(data.split(":")[-1])
             except ValueError:
@@ -522,7 +615,7 @@ class BotService:
                 )
                 return
             deleted = await self.scenarios.delete_scenario(user_id, scenario_id)
-            await self.storage.update_chat_state(user_id, delete_candidate_id=None)
+            await self.storage.update_chat_state(user_id, delete_candidate_id=None, selected_scenario_id=None)
             if deleted:
                 await self.telegram.send_message(
                     chat_id,

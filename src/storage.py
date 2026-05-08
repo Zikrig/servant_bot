@@ -148,7 +148,7 @@ class Storage:
             if row:
                 return dict(row)
             await conn.execute(
-                "INSERT INTO chat_state (user_id, panel_message_id, pending_action, draft_title, delete_candidate_id) VALUES (?, NULL, NULL, NULL, NULL)",
+                "INSERT INTO chat_state (user_id, panel_message_id, pending_action, draft_title, delete_candidate_id, selected_scenario_id) VALUES (?, NULL, NULL, NULL, NULL, NULL)",
                 (user_id,),
             )
             await conn.commit()
@@ -158,6 +158,7 @@ class Storage:
                 "pending_action": None,
                 "draft_title": None,
                 "delete_candidate_id": None,
+                "selected_scenario_id": None,
             }
 
     async def update_chat_state(
@@ -168,6 +169,7 @@ class Storage:
         pending_action: str | None | object = ...,
         draft_title: str | None | object = ...,
         delete_candidate_id: int | None | object = ...,
+        selected_scenario_id: int | None | object = ...,
     ) -> None:
         state = await self.get_chat_state(user_id)
         payload = {
@@ -175,6 +177,7 @@ class Storage:
             "pending_action": state["pending_action"] if pending_action is ... else pending_action,
             "draft_title": state["draft_title"] if draft_title is ... else draft_title,
             "delete_candidate_id": state["delete_candidate_id"] if delete_candidate_id is ... else delete_candidate_id,
+            "selected_scenario_id": state.get("selected_scenario_id") if selected_scenario_id is ... else selected_scenario_id,
         }
         async with aiosqlite.connect(self.db_path) as conn:
             await conn.execute(
@@ -184,6 +187,7 @@ class Storage:
                     pending_action = ?,
                     draft_title = ?,
                     delete_candidate_id = ?,
+                    selected_scenario_id = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE user_id = ?
                 """,
@@ -192,6 +196,7 @@ class Storage:
                     payload["pending_action"],
                     payload["draft_title"],
                     payload["delete_candidate_id"],
+                    payload["selected_scenario_id"],
                     user_id,
                 ),
             )

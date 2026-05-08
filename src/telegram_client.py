@@ -20,6 +20,32 @@ class TelegramClient:
             raise RuntimeError(f"Telegram API error for {method}: {body}")
         return body["result"]
 
+    async def send_text_document(
+        self,
+        *,
+        chat_id: int,
+        filename: str,
+        text: str,
+        caption: str | None = None,
+        business_connection_id: str | None = None,
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+        if business_connection_id:
+            data["business_connection_id"] = business_connection_id
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                f"{self.base_url}/sendDocument",
+                data=data,
+                files={"document": (filename, text.encode("utf-8"), "text/plain")},
+            )
+            response.raise_for_status()
+            body = response.json()
+        if not body.get("ok"):
+            raise RuntimeError(f"Telegram API error for sendDocument: {body}")
+        return body["result"]
+
     async def send_message(
         self,
         chat_id: int,

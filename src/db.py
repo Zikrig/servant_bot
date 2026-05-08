@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
     pending_action TEXT,
     draft_title TEXT,
     delete_candidate_id INTEGER,
+    selected_scenario_id INTEGER,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -59,4 +60,10 @@ CREATE TABLE IF NOT EXISTS business_connections (
 async def init_db(db_path: str) -> None:
     async with aiosqlite.connect(db_path) as conn:
         await conn.executescript(SCHEMA_SQL)
+        columns = {
+            row[1]
+            for row in await (await conn.execute("PRAGMA table_info(chat_state)")).fetchall()
+        }
+        if "selected_scenario_id" not in columns:
+            await conn.execute("ALTER TABLE chat_state ADD COLUMN selected_scenario_id INTEGER")
         await conn.commit()
