@@ -20,10 +20,19 @@ class TelegramClient:
             raise RuntimeError(f"Telegram API error for {method}: {body}")
         return body["result"]
 
-    async def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None) -> dict[str, Any]:
+    async def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict | None = None,
+        *,
+        business_connection_id: str | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_markup:
             payload["reply_markup"] = reply_markup
+        if business_connection_id:
+            payload["business_connection_id"] = business_connection_id
         return await self.call("sendMessage", payload)
 
     async def edit_message_text(
@@ -33,6 +42,7 @@ class TelegramClient:
         message_id: int,
         text: str,
         reply_markup: dict | None = None,
+        business_connection_id: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -41,6 +51,8 @@ class TelegramClient:
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup
+        if business_connection_id:
+            payload["business_connection_id"] = business_connection_id
         return await self.call("editMessageText", payload)
 
     async def answer_callback_query(self, callback_query_id: str, text: str | None = None, show_alert: bool = False) -> None:
@@ -49,10 +61,18 @@ class TelegramClient:
             payload["text"] = text
         await self.call("answerCallbackQuery", payload)
 
-    async def set_webhook(self, url: str, secret_token: str | None = None) -> dict[str, Any]:
+    async def set_webhook(
+        self,
+        url: str,
+        secret_token: str | None = None,
+        *,
+        allowed_updates: list[str] | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"url": url}
         if secret_token:
             payload["secret_token"] = secret_token
+        if allowed_updates is not None:
+            payload["allowed_updates"] = allowed_updates
         return await self.call("setWebhook", payload)
 
     async def get_me(self) -> dict[str, Any]:

@@ -20,6 +20,15 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+WEBHOOK_ALLOWED_UPDATES = [
+    "message",
+    "edited_message",
+    "callback_query",
+    "business_connection",
+    "business_message",
+    "edited_business_message",
+    "deleted_business_messages",
+]
 
 storage = Storage(settings.db_path)
 telegram = TelegramClient(api_base=TELEGRAM_API_BASE, bot_token=settings.telegram_bot_token)
@@ -76,7 +85,11 @@ async def startup() -> None:
     if settings.auto_set_webhook:
         webhook_url = f"{settings.webhook_public_url.rstrip('/')}/telegram/webhook"
         try:
-            result = await telegram.set_webhook(url=webhook_url, secret_token=settings.webhook_secret_token)
+            result = await telegram.set_webhook(
+                url=webhook_url,
+                secret_token=settings.webhook_secret_token,
+                allowed_updates=WEBHOOK_ALLOWED_UPDATES,
+            )
             logger.info("Webhook configured: %s", result)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to set webhook: %s", exc)
@@ -96,12 +109,22 @@ async def telegram_webhook(
         raise HTTPException(status_code=401, detail="Unauthorized webhook")
 
     update = await request.json()
+    update_id = update.get("update_id")
+    update_keys = sorted([key for key in update.keys() if key != "update_id"])
+    logger.info("Incoming update_id=%s keys=%s", update_id, update_keys)
 
     try:
         if "callback_query" in update:
             await bot.handle_callback(update["callback_query"])
         elif "message" in update:
-            await bot.handle_message(update["message"])
+            await bot.handle_message(update["message"], source="message")
+        elif "business_message" in update:
+            await bot.handle_message(update["business_message"], source="business_message")
+        elif "edited_business_message" in update:
+            # Edited updates are still useful for diagnostics in business chats.
+            await bot.handle_message(update["edited_business_message"], source="edited_business_message")
+        else:
+            logger.info("Unhandled update type: update_id=%s keys=%s", update_id, update_keys)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to process update: %s", exc)
 
