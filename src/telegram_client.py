@@ -27,12 +27,15 @@ class TelegramClient:
         reply_markup: dict | None = None,
         *,
         business_connection_id: str | None = None,
+        parse_mode: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_markup:
             payload["reply_markup"] = reply_markup
         if business_connection_id:
             payload["business_connection_id"] = business_connection_id
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         return await self.call("sendMessage", payload)
 
     async def edit_message_text(

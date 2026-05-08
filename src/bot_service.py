@@ -98,6 +98,29 @@ class BotService:
             f"{user_text}"
         )
 
+    async def _send_llm_answer(
+        self,
+        *,
+        chat_id: int,
+        answer: str,
+        business_connection_id: str | None = None,
+    ) -> None:
+        # Prefer Markdown for model-formatted answers, but gracefully fallback.
+        try:
+            await self.telegram.send_message(
+                chat_id,
+                answer,
+                business_connection_id=business_connection_id,
+                parse_mode="Markdown",
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Failed to send Markdown answer, fallback to plain text: %s", exc)
+            await self.telegram.send_message(
+                chat_id,
+                answer,
+                business_connection_id=business_connection_id,
+            )
+
     async def _render_panel(self, chat_id: int, user_id: int, *, business_connection_id: str | None = None) -> None:
         scenario_items = await self.storage.list_scenarios(user_id)
         state = await self.storage.get_chat_state(user_id)
@@ -208,6 +231,14 @@ class BotService:
         is_private = chat_type == "private"
         business_connection_id = message.get("business_connection_id")
         from_user = message.get("from", {})
+        if from_user.get("is_bot"):
+            self.logger.info(
+                "Ignoring %s update from bot user: chat_id=%s chat_type=%s",
+                source,
+                chat_id,
+                chat_type,
+            )
+            return
         telegram_user_id = from_user.get("id")
         if telegram_user_id is None:
             return
@@ -277,12 +308,11 @@ class BotService:
             await self._render_panel(chat_id, user["id"], business_connection_id=business_connection_id)
             return
 
-        # Guest-only mode: react only to explicit mention or reply to bot message.
+        # In managed chats, react only to explicit mentions.
         is_mention = self._is_mention_message(text)
-        is_reply_to_bot = self._is_reply_to_bot(message)
-        if not is_private and not is_mention and not is_reply_to_bot:
+        if not is_private and not is_mention:
             self.logger.info(
-                "Ignoring %s update without mention/reply: chat_id=%s chat_type=%s text=%r",
+                "Ignoring %s update without mention: chat_id=%s chat_type=%s text=%r",
                 source,
                 chat_id,
                 chat_type,
@@ -290,7 +320,7 @@ class BotService:
             )
             return
 
-        cleaned_text = text if is_private else (self._strip_mention(text) if is_mention else text)
+        cleaned_text = text if is_private else self._strip_mention(text)
         normalized = cleaned_text.strip().lower()
         if normalized in {"panel", "/panel"}:
             if is_private:
@@ -349,7 +379,11 @@ class BotService:
         except Exception as exc:  # noqa: BLE001
             self.logger.exception("LLM generation failed: %s", exc)
             answer = "Сервис модели временно недоступен. Попробуйте еще раз."
-        await self.telegram.send_message(chat_id, answer, business_connection_id=business_connection_id)
+        await self._send_llm_answer(
+            chat_id=chat_id,
+            answer=answer,
+            business_connection_id=business_connection_id,
+        )
 
     async def handle_callback(self, callback_query: dict) -> None:
         callback_id = callback_query["id"]
