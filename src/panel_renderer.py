@@ -4,18 +4,7 @@ from __future__ import annotations
 class PanelRenderer:
     @staticmethod
     def build_panel_text(scenarios: list[dict]) -> str:
-        if not scenarios:
-            return (
-                "Панель сценариев.\n\n"
-                "Сценариев пока нет.\n"
-                "Нажмите «Добавить сценарий», чтобы создать первый режим ответа."
-            )
-        lines: list[str] = ["Панель сценариев.\n"]
-        for scenario in scenarios:
-            marker = "🟢" if scenario["is_enabled"] else "🔴"
-            lines.append(f"{marker} {scenario['title']}")
-        lines.append("\nОдновременно может быть включен только один сценарий.")
-        return "\n".join(lines)
+        return "Панель сценариев.\nОдновременно может быть включен только один сценарий."
 
     @staticmethod
     def _scenario_row(scenario: dict) -> list[dict]:

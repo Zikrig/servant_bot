@@ -100,8 +100,7 @@ class BotService:
 
     @staticmethod
     def _scenario_filename(title: str) -> str:
-        safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", title.strip()) or "scenario"
-        return f"{safe[:48]}.txt"
+        return "prompt.txt"
 
     async def _send_llm_answer(
         self,
