@@ -121,10 +121,10 @@ class BotService:
         await self.storage.get_chat_state(user["id"])
         await self.telegram.send_message(
             chat_id,
-            "Бот активирован. Управляйте сценариями через панель ниже.\n"
+            "Бот активирован.\n"
+            "Откройте панель командой /panel.\n"
             "Одновременно может быть включен только один сценарий.",
         )
-        await self._render_panel(chat_id, user["id"])
 
     async def handle_message(self, message: dict) -> None:
         chat = message.get("chat", {})
@@ -148,14 +148,15 @@ class BotService:
             await self._render_panel(chat_id, user["id"])
             return
 
+        # Stateful scenario creation should work without mention/reply gating.
+        consumed = await self._handle_stateful_input(chat_id, user["id"], text)
+        if consumed:
+            return
+
         # Guest-only mode: react only to explicit mention or reply to bot message.
         is_mention = self._is_mention_message(text)
         is_reply_to_bot = self._is_reply_to_bot(message)
         if not is_mention and not is_reply_to_bot:
-            return
-
-        consumed = await self._handle_stateful_input(chat_id, user["id"], text)
-        if consumed:
             return
 
         cleaned_text = self._strip_mention(text) if is_mention else text
@@ -223,7 +224,6 @@ class BotService:
                 delete_candidate_id=None,
             )
             await self.telegram.send_message(chat_id, "Введите название нового сценария.")
-            await self._render_panel(chat_id, user_id)
             return
 
         if data == "panel:refresh":
