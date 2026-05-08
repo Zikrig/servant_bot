@@ -121,14 +121,15 @@ class BotService:
         await self.storage.get_chat_state(user["id"])
         await self.telegram.send_message(
             chat_id,
-            "Бот активирован.\n"
-            "Откройте панель командой /panel.\n"
+            "Бот активирован. Управляйте сценариями через панель ниже.\n"
             "Одновременно может быть включен только один сценарий.",
         )
+        await self._render_panel(chat_id, user["id"])
 
     async def handle_message(self, message: dict) -> None:
         chat = message.get("chat", {})
         chat_id = chat["id"]
+        chat_type = (chat.get("type") or "").lower()
         from_user = message.get("from", {})
         telegram_user_id = from_user.get("id")
         if telegram_user_id is None:
@@ -153,18 +154,7 @@ class BotService:
         if consumed:
             return
 
-        # Guest-only mode: react only to explicit mention or reply to bot message.
-        is_mention = self._is_mention_message(text)
-        is_reply_to_bot = self._is_reply_to_bot(message)
-        if not is_mention and not is_reply_to_bot:
-            return
-
-        cleaned_text = self._strip_mention(text) if is_mention else text
-        normalized = cleaned_text.strip().lower()
-        if normalized in {"panel", "/panel"}:
-            await self._render_panel(chat_id, user["id"])
-            return
-        if normalized in {"cancel", "/cancel"}:
+        if normalized_text in {"cancel", "/cancel"}:
             await self.storage.update_chat_state(
                 user["id"],
                 pending_action=None,
@@ -172,6 +162,20 @@ class BotService:
                 delete_candidate_id=None,
             )
             await self.telegram.send_message(chat_id, "Текущее действие отменено.")
+            await self._render_panel(chat_id, user["id"])
+            return
+
+        # Guest-only mode: react only to explicit mention or reply to bot message.
+        is_mention = self._is_mention_message(text)
+        is_reply_to_bot = self._is_reply_to_bot(message)
+        if not is_mention and not is_reply_to_bot:
+            if chat_type == "private":
+                await self._render_panel(chat_id, user["id"])
+            return
+
+        cleaned_text = self._strip_mention(text) if is_mention else text
+        normalized = cleaned_text.strip().lower()
+        if normalized in {"panel", "/panel"}:
             await self._render_panel(chat_id, user["id"])
             return
 
@@ -186,11 +190,7 @@ class BotService:
 
         enabled = await self.storage.get_enabled_scenario(user["id"])
         if not enabled:
-            await self.telegram.send_message(
-                chat_id,
-                "Нет активного сценария для вашего профиля. "
-                "Сначала активируйте сценарий через управляющий интерфейс.",
-            )
+            await self._render_panel(chat_id, user["id"])
             return
 
         try:
