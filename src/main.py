@@ -24,10 +24,7 @@ WEBHOOK_ALLOWED_UPDATES = [
     "message",
     "edited_message",
     "callback_query",
-    "business_connection",
-    "business_message",
-    "edited_business_message",
-    "deleted_business_messages",
+    "guest_message",
 ]
 
 storage = Storage(settings.db_path)
@@ -118,13 +115,8 @@ async def telegram_webhook(
             await bot.handle_callback(update["callback_query"])
         elif "message" in update:
             await bot.handle_message(update["message"], source="message")
-        elif "business_message" in update:
-            await bot.handle_message(update["business_message"], source="business_message")
-        elif "edited_business_message" in update:
-            # Edited updates are still useful for diagnostics in business chats.
-            await bot.handle_message(update["edited_business_message"], source="edited_business_message")
-        elif "business_connection" in update:
-            await bot.handle_business_connection(update["business_connection"])
+        elif "guest_message" in update:
+            await bot.handle_guest_message(update["guest_message"])
         else:
             logger.info("Unhandled update type: update_id=%s keys=%s", update_id, update_keys)
     except Exception as exc:  # noqa: BLE001

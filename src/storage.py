@@ -137,6 +137,21 @@ class Storage:
             )
             return dict(row) if row else None
 
+    async def get_any_enabled_scenario(self) -> dict | None:
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            row = await self._fetchone(
+                conn,
+                """
+                SELECT *
+                FROM scenarios
+                WHERE is_enabled = 1
+                ORDER BY created_at, id
+                LIMIT 1
+                """,
+            )
+            return dict(row) if row else None
+
     async def get_chat_state(self, user_id: int) -> dict:
         async with aiosqlite.connect(self.db_path) as conn:
             conn.row_factory = aiosqlite.Row
@@ -262,30 +277,3 @@ class Storage:
             items.reverse()
             return items
 
-    async def upsert_business_connection_owner(
-        self,
-        *,
-        business_connection_id: str,
-        owner_telegram_user_id: int,
-    ) -> None:
-        async with aiosqlite.connect(self.db_path) as conn:
-            await conn.execute(
-                """
-                INSERT INTO business_connections (business_connection_id, owner_telegram_user_id, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(business_connection_id) DO UPDATE SET
-                    owner_telegram_user_id = excluded.owner_telegram_user_id,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (business_connection_id, owner_telegram_user_id),
-            )
-            await conn.commit()
-
-    async def get_business_connection_owner(self, business_connection_id: str) -> int | None:
-        async with aiosqlite.connect(self.db_path) as conn:
-            row = await self._fetchone(
-                conn,
-                "SELECT owner_telegram_user_id FROM business_connections WHERE business_connection_id = ?",
-                (business_connection_id,),
-            )
-            return int(row[0]) if row else None

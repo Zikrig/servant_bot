@@ -27,13 +27,10 @@ class TelegramClient:
         filename: str,
         text: str,
         caption: str | None = None,
-        business_connection_id: str | None = None,
     ) -> dict[str, Any]:
         data: dict[str, Any] = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
-        if business_connection_id:
-            data["business_connection_id"] = business_connection_id
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
                 f"{self.base_url}/sendDocument",
@@ -52,14 +49,11 @@ class TelegramClient:
         text: str,
         reply_markup: dict | None = None,
         *,
-        business_connection_id: str | None = None,
         parse_mode: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        if business_connection_id:
-            payload["business_connection_id"] = business_connection_id
         if parse_mode:
             payload["parse_mode"] = parse_mode
         return await self.call("sendMessage", payload)
@@ -71,7 +65,6 @@ class TelegramClient:
         message_id: int,
         text: str,
         reply_markup: dict | None = None,
-        business_connection_id: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -80,8 +73,6 @@ class TelegramClient:
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        if business_connection_id:
-            payload["business_connection_id"] = business_connection_id
         return await self.call("editMessageText", payload)
 
     async def answer_callback_query(self, callback_query_id: str, text: str | None = None, show_alert: bool = False) -> None:
@@ -89,6 +80,27 @@ class TelegramClient:
         if text:
             payload["text"] = text
         await self.call("answerCallbackQuery", payload)
+
+    async def answer_guest_query(
+        self,
+        *,
+        guest_query_id: str,
+        text: str,
+        parse_mode: str | None = None,
+    ) -> dict[str, Any]:
+        input_message_content: dict[str, Any] = {"message_text": text}
+        if parse_mode:
+            input_message_content["parse_mode"] = parse_mode
+        payload = {
+            "guest_query_id": guest_query_id,
+            "result": {
+                "type": "article",
+                "id": f"guest-{guest_query_id}"[:64],
+                "title": "Reply",
+                "input_message_content": input_message_content,
+            },
+        }
+        return await self.call("answerGuestQuery", payload)
 
     async def set_webhook(
         self,
