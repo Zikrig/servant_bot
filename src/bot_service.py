@@ -138,6 +138,15 @@ class BotService:
             return
 
         user = await self.storage.get_or_create_user(telegram_user_id)
+        normalized_text = text.lower()
+
+        # Handle startup/panel commands before Guest-mode mention gating.
+        if normalized_text in {"/start", "/start@" + self.bot_username}:
+            await self.handle_start(chat_id, telegram_user_id)
+            return
+        if normalized_text in {"/panel", "/panel@" + self.bot_username}:
+            await self._render_panel(chat_id, user["id"])
+            return
 
         # Guest-only mode: react only to explicit mention or reply to bot message.
         is_mention = self._is_mention_message(text)
