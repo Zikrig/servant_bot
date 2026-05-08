@@ -341,14 +341,15 @@ class BotService:
             return
 
         # Business flow:
-        # - owner message -> answer only on mention
+        # - owner message -> answer only on mention OR reply-to-bot
         # - interlocutor message -> answer without mention
         is_mention = self._is_mention_message(text)
+        is_reply_to_bot = self._is_reply_to_bot(message)
         if is_business_source:
             is_owner_message = owner_telegram_user_id is not None and telegram_user_id == owner_telegram_user_id
-            if is_owner_message and not is_mention:
+            if is_owner_message and not (is_mention or is_reply_to_bot):
                 self.logger.info(
-                    "Ignoring owner business message without mention: chat_id=%s owner_tg_id=%s",
+                    "Ignoring owner business message without mention/reply: chat_id=%s owner_tg_id=%s",
                     chat_id,
                     owner_telegram_user_id,
                 )
