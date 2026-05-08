@@ -99,6 +99,36 @@ class BotService:
         )
 
     @staticmethod
+    def _extract_reply_text(message: dict) -> str | None:
+        reply_message = message.get("reply_to_message") or {}
+        reply_text = (reply_message.get("text") or reply_message.get("caption") or "").strip()
+        if reply_text:
+            return reply_text
+
+        external_reply = message.get("external_reply") or {}
+        reply_text = (external_reply.get("text") or external_reply.get("caption") or "").strip()
+        if reply_text:
+            return reply_text
+
+        origin = external_reply.get("origin") or {}
+        sender_user = origin.get("sender_user") or {}
+        sender_name = (
+            sender_user.get("username")
+            or " ".join(
+                part
+                for part in [sender_user.get("first_name", "").strip(), sender_user.get("last_name", "").strip()]
+                if part
+            )
+            or origin.get("sender_user_name")
+            or origin.get("author_signature")
+        )
+        origin_text = (origin.get("text") or "").strip()
+        if origin_text:
+            prefix = f"{sender_name}: " if sender_name else ""
+            return f"{prefix}{origin_text}"
+        return None
+
+    @staticmethod
     def _scenario_filename(title: str) -> str:
         return "prompt.txt"
 
@@ -328,25 +358,10 @@ class BotService:
             )
             return
 
-        await self.storage.append_chat_message(
-            chat_id=chat_id,
-            message_id=message_id if isinstance(message_id, int) else None,
-            sender_label=self._sender_label(from_user),
-            text=text,
-            is_bot=False,
-        )
-
         cleaned_text = self._strip_mention(text) if self._is_mention_message(text) else text
         if not cleaned_text.strip():
             answer = "Сформулируйте запрос текстом или ответьте на предыдущее сообщение бота."
             await self._answer_guest_query(guest_query_id=guest_query_id, answer=answer)
-            await self.storage.append_chat_message(
-                chat_id=chat_id,
-                message_id=None,
-                sender_label=f"@{self.bot_username}" if self.bot_username else "bot",
-                text=answer,
-                is_bot=True,
-            )
             return
 
         enabled = await self.storage.get_any_enabled_scenario()
@@ -354,36 +369,17 @@ class BotService:
             answer = "Нет активного сценария. Включите сценарий в личном чате с ботом."
             self.logger.info("Skipping guest reply: no active scenario")
             await self._answer_guest_query(guest_query_id=guest_query_id, answer=answer)
-            await self.storage.append_chat_message(
-                chat_id=chat_id,
-                message_id=None,
-                sender_label=f"@{self.bot_username}" if self.bot_username else "bot",
-                text=answer,
-                is_bot=True,
-            )
             return
 
-        reply_text = None
-        reply_message = message.get("reply_to_message") or {}
-        if reply_message:
-            reply_text = (reply_message.get("text") or reply_message.get("caption") or "").strip() or None
-        if not reply_text:
-            external_reply = message.get("external_reply") or {}
-            reply_text = (external_reply.get("text") or external_reply.get("caption") or "").strip() or None
-        recent_messages = await self.storage.get_recent_chat_messages(
-            chat_id=chat_id,
-            limit=10,
-            exclude_message_id=message_id if isinstance(message_id, int) else None,
-        )
+        reply_text = self._extract_reply_text(message)
         llm_user_text = self._build_user_prompt_with_context(
             user_text=cleaned_text,
             reply_text=reply_text,
-            recent_messages=recent_messages,
+            recent_messages=[],
         )
         self.logger.info(
-            "Guest LLM context prepared: chat_id=%s context_count=%s reply_present=%s guest_query_id=%s",
+            "Guest LLM context prepared: chat_id=%s reply_present=%s guest_query_id=%s",
             chat_id,
-            len(recent_messages),
             bool(reply_text),
             guest_query_id,
         )
@@ -396,13 +392,6 @@ class BotService:
         await self._answer_guest_query(
             guest_query_id=guest_query_id,
             answer=answer,
-        )
-        await self.storage.append_chat_message(
-            chat_id=chat_id,
-            message_id=None,
-            sender_label=f"@{self.bot_username}" if self.bot_username else "bot",
-            text=answer,
-            is_bot=True,
         )
 
     async def handle_callback(self, callback_query: dict) -> None:
