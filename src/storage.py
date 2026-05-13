@@ -423,37 +423,54 @@ class Storage:
         raw_rights: dict[str, Any] | None,
     ) -> None:
         async with aiosqlite.connect(self.db_path) as conn:
+            columns = {
+                row[1]
+                for row in await (await conn.execute("PRAGMA table_info(business_connections)")).fetchall()
+            }
+            insert_columns = [
+                "business_connection_id",
+                "owner_user_id",
+                "owner_telegram_id",
+                "owner_private_chat_id",
+                "can_reply",
+                "can_read_messages",
+                "raw_rights",
+                "updated_at",
+            ]
+            insert_values: list[Any] = [
+                business_connection_id,
+                owner_user_id,
+                owner_telegram_id,
+                owner_private_chat_id,
+                1 if can_reply else 0,
+                1 if can_read_messages else 0,
+                json.dumps(raw_rights or {}, ensure_ascii=False),
+                "CURRENT_TIMESTAMP",
+            ]
+            update_assignments = [
+                "owner_user_id = excluded.owner_user_id",
+                "owner_telegram_id = excluded.owner_telegram_id",
+                "owner_private_chat_id = excluded.owner_private_chat_id",
+                "can_reply = excluded.can_reply",
+                "can_read_messages = excluded.can_read_messages",
+                "raw_rights = excluded.raw_rights",
+                "updated_at = CURRENT_TIMESTAMP",
+            ]
+            if "owner_telegram_user_id" in columns:
+                insert_columns.insert(3, "owner_telegram_user_id")
+                insert_values.insert(3, owner_telegram_id)
+                update_assignments.insert(2, "owner_telegram_user_id = excluded.owner_telegram_user_id")
+
+            placeholders = ", ".join("?" if value != "CURRENT_TIMESTAMP" else "CURRENT_TIMESTAMP" for value in insert_values)
+            parameters = tuple(value for value in insert_values if value != "CURRENT_TIMESTAMP")
             await conn.execute(
-                """
-                INSERT INTO business_connections (
-                    business_connection_id,
-                    owner_user_id,
-                    owner_telegram_id,
-                    owner_private_chat_id,
-                    can_reply,
-                    can_read_messages,
-                    raw_rights,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                f"""
+                INSERT INTO business_connections ({", ".join(insert_columns)})
+                VALUES ({placeholders})
                 ON CONFLICT(business_connection_id) DO UPDATE SET
-                    owner_user_id = excluded.owner_user_id,
-                    owner_telegram_id = excluded.owner_telegram_id,
-                    owner_private_chat_id = excluded.owner_private_chat_id,
-                    can_reply = excluded.can_reply,
-                    can_read_messages = excluded.can_read_messages,
-                    raw_rights = excluded.raw_rights,
-                    updated_at = CURRENT_TIMESTAMP
+                    {", ".join(update_assignments)}
                 """,
-                (
-                    business_connection_id,
-                    owner_user_id,
-                    owner_telegram_id,
-                    owner_private_chat_id,
-                    1 if can_reply else 0,
-                    1 if can_read_messages else 0,
-                    json.dumps(raw_rights or {}, ensure_ascii=False),
-                ),
+                parameters,
             )
             await conn.commit()
 
@@ -468,6 +485,8 @@ class Storage:
             if not row:
                 return None
             item = dict(row)
+            if item.get("owner_telegram_id") is None and item.get("owner_telegram_user_id") is not None:
+                item["owner_telegram_id"] = item["owner_telegram_user_id"]
             item["can_reply"] = bool(item.get("can_reply"))
             item["can_read_messages"] = bool(item.get("can_read_messages"))
             item["raw_rights"] = self._loads_json(item.get("raw_rights"), {})
