@@ -14,6 +14,7 @@ from src.telegram_client import TelegramClient
 class BotService:
     TIME_RE = re.compile(r"^(?P<hour>\d{1,3}):(?P<minute>\d{2})$")
     DATE_RE = re.compile(r"^(0[1-9]|[12]\d|3[01])\.(0[1-9]|1[0-2])$")
+    MOSCOW_TZ = timezone(timedelta(hours=3))
 
     def __init__(
         self,
@@ -504,7 +505,7 @@ class BotService:
         )
 
     def _scenario_allows_time(self, scenario: dict, now_dt: datetime) -> bool:
-        local_dt = now_dt.astimezone()
+        local_dt = now_dt.astimezone(self.MOSCOW_TZ)
         if scenario.get("use_weekend_rules"):
             weekend_days = {int(day) for day in scenario.get("weekend_days") or []}
             extra_holidays = set(scenario.get("extra_holidays") or [])
