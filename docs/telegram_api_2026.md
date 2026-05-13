@@ -36,51 +36,41 @@
 ## Используемые методы в текущем проекте
 
 - `setWebhook` — прием апдейтов в webhook-режиме.
-- `sendMessage` — отправка сообщений и панели в обычном чате с ботом.
+- `sendMessage` — отправка сообщений; для business-ответов используется с `business_connection_id`.
 - `editMessageText` — перерисовка панели без лишних сообщений.
 - `answerCallbackQuery` — обязательный ответ на инлайн-кнопки.
-- `answerGuestQuery` — ответ на `guest_message`.
-- `sendDocument` — отправка полного текста промпта отдельным файлом из карточки сценария.
-
-## Что важно про Guest Mode
-
-- Guest Mode и обычный чат с ботом — это разные каналы.
-- В Guest Mode бот не получает полноценную историю чата.
-- По факту бот может опираться только на то, что Telegram реально прислал в `guest_message`:
-  - текущее сообщение,
-  - `reply_to_message`, если оно есть,
-  - `external_reply`, если Telegram его передал.
-- Нельзя считать, что guest-бот видит "последние 10 сообщений чата". Если бот на паузе и доступ у него только гостевой, такого доступа у него нет.
+- `getBusinessConnection` — получение владельца и прав по `business_connection_id`.
 
 ## Что важно про Business Mode
 
-- `business_message` и `guest_message` — разные механики и разные условия доставки.
-- `business_message` приходит при работе через подключенный бизнес-аккаунт.
-- `guest_message` приходит при Guest Mode, когда бот summoned в чужом чате как гость.
-- В одном и том же продукте можно поддерживать оба потока, но их хендлеры и методы ответа должны быть разными.
+- Для автоответов в бизнес-аккаунте нужен поток `business_message`.
+- У входящего `business_message` есть `business_connection_id`.
+- Чтобы понять владельца и права бота, можно использовать update `business_connection` и метод `getBusinessConnection`.
+- Для отправки ответа нужно использовать `sendMessage` с `business_connection_id`.
+- Обычный `message` и `business_message` не надо смешивать в одном runtime-потоке автоответов.
 
 ## Практические проверки
 
-- Проверка guest-capability:
-  - `getMe` должен возвращать `supports_guest_queries=true`
-- Проверка webhook:
-  - `getWebhookInfo` должен показывать правильный `url`
-  - в `allowed_updates` должен быть `guest_message`, если поддерживается Guest Mode
-- Если в логах нет `Incoming update_id=...` после guest-упоминания, проблема обычно не в хендлере, а в том, что:
-  - либо `supports_guest_queries=false`,
-  - либо не тот webhook,
-  - либо бот не guest-enabled в настройках Telegram/BotFather.
+- `getWebhookInfo` должен показывать правильный `url`.
+- В `allowed_updates` должны быть:
+  - `business_connection`
+  - `business_message`
+  - `edited_business_message`
+- У входящего business-сообщения должен быть `business_connection_id`.
+- Если бот молчит, сначала проверить:
+  - пришел ли вообще `business_message`,
+  - есть ли активный сценарий у владельца connection,
+  - есть ли у connection право `can_reply`.
 
 ## Лимиты и ограничения
 
 - `callback_data` в inline-кнопках: 1-64 байта.
 - Старые кнопки могут оставаться в истории, поэтому коллбеки должны быть идемпотентными.
-- Guest Mode дает только локальный контекст запроса, а не весь чат.
 - Business Mode и Guest Mode не следует смешивать в одном хендлере без явного разделения логики.
 
 ## Замечание по текущей реализации
 
 - Сейчас проект использует:
-  - `message` для панели и управления сценариями
-  - `guest_message` для ответа по активному сценарию в guest-режиме
-- Business-обработка была исследована, но на текущем этапе убрана из рабочего потока, чтобы не смешивать два разных режима доступа и ответа.
+  - `message` для панели и управления сценариями в личном чате с ботом
+  - `business_connection` для привязки Telegram Business connection к владельцу
+  - `business_message` для автоответов в бизнес-чатах

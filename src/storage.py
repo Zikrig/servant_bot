@@ -411,6 +411,68 @@ class Storage:
             row = await self._fetchone(conn, "SELECT * FROM managed_chats WHERE chat_id = ?", (chat_id,))
             return dict(row) if row else None
 
+    async def upsert_business_connection(
+        self,
+        *,
+        business_connection_id: str,
+        owner_user_id: int,
+        owner_telegram_id: int,
+        owner_private_chat_id: int | None,
+        can_reply: bool,
+        can_read_messages: bool,
+        raw_rights: dict[str, Any] | None,
+    ) -> None:
+        async with aiosqlite.connect(self.db_path) as conn:
+            await conn.execute(
+                """
+                INSERT INTO business_connections (
+                    business_connection_id,
+                    owner_user_id,
+                    owner_telegram_id,
+                    owner_private_chat_id,
+                    can_reply,
+                    can_read_messages,
+                    raw_rights,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(business_connection_id) DO UPDATE SET
+                    owner_user_id = excluded.owner_user_id,
+                    owner_telegram_id = excluded.owner_telegram_id,
+                    owner_private_chat_id = excluded.owner_private_chat_id,
+                    can_reply = excluded.can_reply,
+                    can_read_messages = excluded.can_read_messages,
+                    raw_rights = excluded.raw_rights,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    business_connection_id,
+                    owner_user_id,
+                    owner_telegram_id,
+                    owner_private_chat_id,
+                    1 if can_reply else 0,
+                    1 if can_read_messages else 0,
+                    json.dumps(raw_rights or {}, ensure_ascii=False),
+                ),
+            )
+            await conn.commit()
+
+    async def get_business_connection(self, business_connection_id: str) -> dict | None:
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            row = await self._fetchone(
+                conn,
+                "SELECT * FROM business_connections WHERE business_connection_id = ?",
+                (business_connection_id,),
+            )
+            if not row:
+                return None
+            item = dict(row)
+            item["can_reply"] = bool(item.get("can_reply"))
+            item["can_read_messages"] = bool(item.get("can_read_messages"))
+            item["raw_rights"] = self._loads_json(item.get("raw_rights"), {})
+            return item
+
     async def get_conversation_state(self, chat_id: int, owner_user_id: int) -> dict | None:
         async with aiosqlite.connect(self.db_path) as conn:
             conn.row_factory = aiosqlite.Row
@@ -427,6 +489,7 @@ class Storage:
         chat_id: int,
         owner_user_id: int,
         scenario_id: int,
+        business_connection_id: str | None,
         due_at: str,
         message_id: int | None,
         customer_message_at: str,
@@ -442,6 +505,7 @@ class Storage:
                     chat_id,
                     owner_user_id,
                     scenario_id,
+                    business_connection_id,
                     waiting_due_at,
                     waiting_from_message_id,
                     last_customer_message_at,
@@ -450,9 +514,10 @@ class Storage:
                     last_bot_reply_message_id,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(chat_id, owner_user_id) DO UPDATE SET
                     scenario_id = excluded.scenario_id,
+                    business_connection_id = excluded.business_connection_id,
                     waiting_due_at = excluded.waiting_due_at,
                     waiting_from_message_id = excluded.waiting_from_message_id,
                     last_customer_message_at = excluded.last_customer_message_at,
@@ -462,6 +527,7 @@ class Storage:
                     chat_id,
                     owner_user_id,
                     scenario_id,
+                    business_connection_id,
                     due_at,
                     message_id,
                     customer_message_at,
@@ -482,17 +548,18 @@ class Storage:
                     chat_id,
                     owner_user_id,
                     scenario_id,
+                    business_connection_id,
                     waiting_due_at,
                     last_owner_message_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(chat_id, owner_user_id) DO UPDATE SET
                     waiting_due_at = NULL,
                     last_owner_message_at = excluded.last_owner_message_at,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (chat_id, owner_user_id, scenario_id, owner_message_at),
+                (chat_id, owner_user_id, scenario_id, current.get("business_connection_id") if current else None, owner_message_at),
             )
             await conn.commit()
 

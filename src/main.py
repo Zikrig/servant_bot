@@ -24,6 +24,10 @@ WEBHOOK_ALLOWED_UPDATES = [
     "message",
     "edited_message",
     "callback_query",
+    "business_connection",
+    "business_message",
+    "edited_business_message",
+    "deleted_business_messages",
 ]
 scheduler_task: asyncio.Task | None = None
 
@@ -108,6 +112,12 @@ async def telegram_webhook(
     try:
         if "callback_query" in update:
             await bot.handle_callback(update["callback_query"])
+        elif "business_connection" in update:
+            await bot.handle_business_connection(update["business_connection"])
+        elif "business_message" in update:
+            await bot.handle_business_message(update["business_message"], source="business_message")
+        elif "edited_business_message" in update:
+            await bot.handle_business_message(update["edited_business_message"], source="edited_business_message")
         elif "message" in update:
             await bot.handle_message(update["message"], source="message")
         elif "edited_message" in update:

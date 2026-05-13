@@ -63,10 +63,24 @@ CREATE TABLE IF NOT EXISTS managed_chats (
     FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS business_connections (
+    business_connection_id TEXT PRIMARY KEY,
+    owner_user_id INTEGER NOT NULL,
+    owner_telegram_id INTEGER NOT NULL,
+    owner_private_chat_id INTEGER,
+    can_reply INTEGER NOT NULL DEFAULT 0,
+    can_read_messages INTEGER NOT NULL DEFAULT 0,
+    raw_rights TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS conversation_state (
     chat_id INTEGER NOT NULL,
     owner_user_id INTEGER NOT NULL,
     scenario_id INTEGER NOT NULL,
+    business_connection_id TEXT,
     waiting_due_at TEXT,
     waiting_from_message_id INTEGER,
     last_customer_message_at TEXT,
@@ -126,5 +140,6 @@ async def init_db(db_path: str) -> None:
         await ensure_column("scenarios", "work_start", "work_start TEXT")
         await ensure_column("scenarios", "work_end", "work_end TEXT")
         await ensure_column("scenarios", "template_code", "template_code TEXT NOT NULL DEFAULT 'custom'")
+        await ensure_column("conversation_state", "business_connection_id", "business_connection_id TEXT")
 
         await conn.commit()

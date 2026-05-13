@@ -388,49 +388,120 @@ class BotService:
                 return
             await self._render_panel(chat_id, user["id"])
             return
-        await self._handle_managed_chat_message(message, source=source)
+        return
 
-    async def _resolve_managed_chat(self, chat_id: int, chat_title: str | None) -> dict | None:
-        cached = await self.storage.get_managed_chat(chat_id)
+    async def handle_business_connection(self, connection: dict) -> None:
+        business_connection_id = connection.get("id")
+        owner = (connection.get("user") or {}).get("id")
+        if not business_connection_id or owner is None:
+            return
+        user = await self.storage.get_or_create_user(int(owner))
+        rights = connection.get("rights") or {}
+        await self.storage.upsert_business_connection(
+            business_connection_id=business_connection_id,
+            owner_user_id=user["id"],
+            owner_telegram_id=int(owner),
+            owner_private_chat_id=connection.get("user_chat_id"),
+            can_reply=bool(rights.get("can_reply")),
+            can_read_messages=bool(rights.get("can_read_messages")),
+            raw_rights=rights,
+        )
+
+    async def _resolve_business_connection(self, business_connection_id: str) -> dict | None:
+        cached = await self.storage.get_business_connection(business_connection_id)
         if cached:
             scenario = await self.storage.get_enabled_scenario(cached["owner_user_id"])
             if scenario:
                 cached["scenario"] = scenario
                 return cached
         try:
-            admins = await self.telegram.get_chat_administrators(chat_id)
+            connection = await self.telegram.get_business_connection(business_connection_id)
         except Exception as exc:  # noqa: BLE001
-            self.logger.warning("Failed to resolve chat administrators for %s: %s", chat_id, exc)
+            self.logger.warning("Failed to load business connection %s: %s", business_connection_id, exc)
             return None
-        admin_ids = [
-            int(item.get("user", {}).get("id"))
-            for item in admins
-            if item.get("user", {}).get("id") and not item.get("user", {}).get("is_bot")
-        ]
-        users = await self.storage.get_users_by_telegram_ids(admin_ids)
-        matches: list[dict] = []
-        for user in users:
-            scenario = await self.storage.get_enabled_scenario(user["id"])
-            if scenario:
-                matches.append(
-                    {
-                        "owner_user_id": user["id"],
-                        "owner_telegram_id": user["telegram_user_id"],
-                        "scenario": scenario,
-                    }
-                )
-        if len(matches) != 1:
-            if matches:
-                self.logger.info("Chat %s has multiple registered admins with active scenarios.", chat_id)
+        owner_telegram_id = (connection.get("user") or {}).get("id")
+        if owner_telegram_id is None:
             return None
-        owner = matches[0]
-        await self.storage.upsert_managed_chat(
+        user = await self.storage.get_or_create_user(int(owner_telegram_id))
+        rights = connection.get("rights") or {}
+        await self.storage.upsert_business_connection(
+            business_connection_id=business_connection_id,
+            owner_user_id=user["id"],
+            owner_telegram_id=int(owner_telegram_id),
+            owner_private_chat_id=connection.get("user_chat_id"),
+            can_reply=bool(rights.get("can_reply")),
+            can_read_messages=bool(rights.get("can_read_messages")),
+            raw_rights=rights,
+        )
+        scenario = await self.storage.get_enabled_scenario(user["id"])
+        if not scenario:
+            return None
+        return {
+            "business_connection_id": business_connection_id,
+            "owner_user_id": user["id"],
+            "owner_telegram_id": int(owner_telegram_id),
+            "owner_private_chat_id": connection.get("user_chat_id"),
+            "can_reply": bool(rights.get("can_reply")),
+            "can_read_messages": bool(rights.get("can_read_messages")),
+            "raw_rights": rights,
+            "scenario": scenario,
+        }
+
+    async def handle_business_message(self, message: dict, *, source: str = "business_message") -> None:
+        from_user = message.get("from", {})
+        if from_user.get("is_bot") or message.get("sender_business_bot"):
+            return
+        business_connection_id = message.get("business_connection_id")
+        chat_id = (message.get("chat") or {}).get("id")
+        sender_telegram_id = from_user.get("id")
+        if not business_connection_id or chat_id is None or sender_telegram_id is None:
+            return
+        owner = await self._resolve_business_connection(business_connection_id)
+        if not owner:
+            return
+        scenario = owner["scenario"]
+        message_dt = self._message_datetime(message)
+        message_iso = self._to_iso(message_dt)
+        if int(sender_telegram_id) == int(owner["owner_telegram_id"]):
+            await self.storage.mark_owner_activity(
+                chat_id=chat_id,
+                owner_user_id=owner["owner_user_id"],
+                owner_message_at=message_iso,
+            )
+            return
+        if not owner.get("can_reply"):
+            self.logger.info("Business connection %s has no can_reply right.", business_connection_id)
+            return
+        if not self._scenario_allows_time(scenario, message_dt):
+            return
+        conversation = await self.storage.get_conversation_state(chat_id, owner["owner_user_id"])
+        last_bot_reply_at = self._from_iso(conversation.get("last_bot_reply_at")) if conversation else None
+        last_owner_message_at = self._from_iso(conversation.get("last_owner_message_at")) if conversation else None
+        owner_replied_after_bot = bool(last_bot_reply_at and last_owner_message_at and last_owner_message_at > last_bot_reply_at)
+        if last_bot_reply_at and not owner_replied_after_bot and scenario["not_answer_twice"]:
+            return
+        due_dt = message_dt + timedelta(minutes=int(scenario["steel_pause_minutes"]))
+        if last_bot_reply_at and not owner_replied_after_bot and scenario.get("hot_pause_minutes") is not None:
+            hot_pause_deadline = last_bot_reply_at + timedelta(minutes=int(scenario["hot_pause_minutes"]))
+            if hot_pause_deadline > due_dt:
+                due_dt = hot_pause_deadline
+        await self.storage.schedule_conversation_reply(
             chat_id=chat_id,
             owner_user_id=owner["owner_user_id"],
-            owner_telegram_id=owner["owner_telegram_id"],
-            title=chat_title,
+            scenario_id=scenario["id"],
+            business_connection_id=business_connection_id,
+            due_at=self._to_iso(due_dt),
+            message_id=message.get("message_id"),
+            customer_message_at=message_iso,
         )
-        return owner
+        self.logger.info(
+            "Scheduled business auto-reply for chat_id=%s owner=%s connection=%s due_at=%s source=%s",
+            chat_id,
+            owner["owner_telegram_id"],
+            business_connection_id,
+            self._to_iso(due_dt),
+            source,
+        )
 
     def _scenario_allows_time(self, scenario: dict, now_dt: datetime) -> bool:
         local_dt = now_dt.astimezone()
@@ -522,7 +593,11 @@ class BotService:
                     if not self._scenario_allows_time(item, now):
                         await self.storage.clear_waiting_reply(chat_id=item["chat_id"], owner_user_id=item["owner_user_id"])
                         continue
-                    sent = await self.telegram.send_message(item["chat_id"], item["reply_text"])
+                    sent = await self.telegram.send_message(
+                        item["chat_id"],
+                        item["reply_text"],
+                        business_connection_id=item.get("business_connection_id"),
+                    )
                     await self.storage.mark_bot_replied(
                         chat_id=item["chat_id"],
                         owner_user_id=item["owner_user_id"],

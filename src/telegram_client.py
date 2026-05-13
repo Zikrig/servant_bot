@@ -49,11 +49,14 @@ class TelegramClient:
         text: str,
         reply_markup: dict | None = None,
         *,
+        business_connection_id: str | None = None,
         parse_mode: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_markup:
             payload["reply_markup"] = reply_markup
+        if business_connection_id:
+            payload["business_connection_id"] = business_connection_id
         if parse_mode:
             payload["parse_mode"] = parse_mode
         return await self.call("sendMessage", payload)
@@ -65,6 +68,7 @@ class TelegramClient:
         message_id: int,
         text: str,
         reply_markup: dict | None = None,
+        business_connection_id: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -73,6 +77,8 @@ class TelegramClient:
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup
+        if business_connection_id:
+            payload["business_connection_id"] = business_connection_id
         return await self.call("editMessageText", payload)
 
     async def answer_callback_query(self, callback_query_id: str, text: str | None = None, show_alert: bool = False) -> None:
@@ -121,3 +127,6 @@ class TelegramClient:
 
     async def get_chat_administrators(self, chat_id: int) -> list[dict[str, Any]]:
         return await self.call("getChatAdministrators", {"chat_id": chat_id})
+
+    async def get_business_connection(self, business_connection_id: str) -> dict[str, Any]:
+        return await self.call("getBusinessConnection", {"business_connection_id": business_connection_id})
