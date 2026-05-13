@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from src.bot_service import BotService
-from src.config import EVOLINK_BASE_URL, TELEGRAM_API_BASE, load_prompt_wrapper_text, settings
+from src.config import TELEGRAM_API_BASE, settings
 from src.db import init_db
-from src.evolink_client import EvolinkClient
 from src.panel_renderer import PanelRenderer
 from src.scenario_manager import ScenarioManager, ValidationLimits
 from src.storage import Storage
@@ -24,8 +24,8 @@ WEBHOOK_ALLOWED_UPDATES = [
     "message",
     "edited_message",
     "callback_query",
-    "guest_message",
 ]
+scheduler_task: asyncio.Task | None = None
 
 storage = Storage(settings.db_path)
 telegram = TelegramClient(api_base=TELEGRAM_API_BASE, bot_token=settings.telegram_bot_token)
@@ -34,25 +34,16 @@ scenarios = ScenarioManager(
     ValidationLimits(
         max_scenarios_per_user=settings.max_scenarios_per_user,
         max_title_len=settings.max_scenario_title_len,
-        max_prompt_len=settings.max_scenario_prompt_len,
+        max_reply_len=settings.max_scenario_reply_len,
     ),
 )
 panel = PanelRenderer()
-evolink = EvolinkClient(
-    base_url=EVOLINK_BASE_URL,
-    api_key=settings.evolink_api_key,
-    primary_model=settings.evolink_model_primary,
-    fallback_model=settings.evolink_model_fallback,
-    timeout_sec=settings.evolink_request_timeout_sec,
-)
 bot = BotService(
     storage=storage,
     scenarios=scenarios,
     panel=panel,
-    evolink=evolink,
     telegram=telegram,
     bot_username=settings.telegram_bot_username,
-    prompt_wrapper_text=load_prompt_wrapper_text(),
 )
 
 app = FastAPI(title="Servant Bot", version="0.1.0")
@@ -60,6 +51,7 @@ app = FastAPI(title="Servant Bot", version="0.1.0")
 
 @app.on_event("startup")
 async def startup() -> None:
+    global scheduler_task
     await init_db(settings.db_path)
     me = await telegram.get_me()
     username = me.get("username")
@@ -67,18 +59,6 @@ async def startup() -> None:
         raise RuntimeError("Telegram getMe returned no username.")
     bot.set_bot_username(username)
     logger.info("Bot identity loaded from Telegram: @%s", username)
-
-    try:
-        await evolink.validate_configured_models()
-        logger.info(
-            "Evolink models validated: primary=%s fallback=%s",
-            settings.evolink_model_primary,
-            settings.evolink_model_fallback,
-        )
-    except Exception as exc:  # noqa: BLE001
-        if settings.evolink_strict_model_validation:
-            raise
-        logger.warning("Evolink model validation skipped due to error: %s", exc)
 
     if settings.auto_set_webhook:
         webhook_url = f"{settings.webhook_public_url.rstrip('/')}/telegram/webhook"
@@ -91,6 +71,20 @@ async def startup() -> None:
             logger.info("Webhook configured: %s", result)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to set webhook: %s", exc)
+
+    scheduler_task = asyncio.create_task(bot.run_scheduler_loop(settings.scheduler_poll_seconds))
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    global scheduler_task
+    if scheduler_task is not None:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
+        scheduler_task = None
 
 
 @app.get("/healthz")
@@ -116,8 +110,8 @@ async def telegram_webhook(
             await bot.handle_callback(update["callback_query"])
         elif "message" in update:
             await bot.handle_message(update["message"], source="message")
-        elif "guest_message" in update:
-            await bot.handle_guest_message(update["guest_message"])
+        elif "edited_message" in update:
+            await bot.handle_message(update["edited_message"], source="edited_message")
         else:
             logger.info("Unhandled update type: update_id=%s keys=%s", update_id, update_keys)
     except Exception as exc:  # noqa: BLE001

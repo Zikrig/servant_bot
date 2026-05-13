@@ -118,3 +118,6 @@ class TelegramClient:
 
     async def get_me(self) -> dict[str, Any]:
         return await self.call("getMe", {})
+
+    async def get_chat_administrators(self, chat_id: int) -> list[dict[str, Any]]:
+        return await self.call("getChatAdministrators", {"chat_id": chat_id})
