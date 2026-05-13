@@ -140,6 +140,16 @@ async def init_db(db_path: str) -> None:
         await ensure_column("scenarios", "work_start", "work_start TEXT")
         await ensure_column("scenarios", "work_end", "work_end TEXT")
         await ensure_column("scenarios", "template_code", "template_code TEXT NOT NULL DEFAULT 'custom'")
+
+        await ensure_column("business_connections", "owner_user_id", "owner_user_id INTEGER")
+        await ensure_column("business_connections", "owner_telegram_id", "owner_telegram_id INTEGER")
+        await ensure_column("business_connections", "owner_private_chat_id", "owner_private_chat_id INTEGER")
+        await ensure_column("business_connections", "can_reply", "can_reply INTEGER NOT NULL DEFAULT 0")
+        await ensure_column("business_connections", "can_read_messages", "can_read_messages INTEGER NOT NULL DEFAULT 0")
+        await ensure_column("business_connections", "raw_rights", "raw_rights TEXT NOT NULL DEFAULT '{}'")
+        await ensure_column("business_connections", "created_at", "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        await ensure_column("business_connections", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
         await ensure_column("conversation_state", "business_connection_id", "business_connection_id TEXT")
 
         await conn.commit()
