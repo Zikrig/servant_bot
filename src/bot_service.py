@@ -415,6 +415,11 @@ class BotService:
             if scenario:
                 cached["scenario"] = scenario
                 return cached
+            self.logger.info(
+                "Business connection %s resolved from cache, but owner_user_id=%s has no enabled scenario.",
+                business_connection_id,
+                cached["owner_user_id"],
+            )
         try:
             connection = await self.telegram.get_business_connection(business_connection_id)
         except Exception as exc:  # noqa: BLE001
@@ -422,6 +427,7 @@ class BotService:
             return None
         owner_telegram_id = (connection.get("user") or {}).get("id")
         if owner_telegram_id is None:
+            self.logger.info("Business connection %s has no owner user in Telegram response.", business_connection_id)
             return None
         user = await self.storage.get_or_create_user(int(owner_telegram_id))
         rights = connection.get("rights") or {}
@@ -436,6 +442,12 @@ class BotService:
         )
         scenario = await self.storage.get_enabled_scenario(user["id"])
         if not scenario:
+            self.logger.info(
+                "Business connection %s resolved from Telegram, but owner telegram_id=%s user_id=%s has no enabled scenario.",
+                business_connection_id,
+                owner_telegram_id,
+                user["id"],
+            )
             return None
         return {
             "business_connection_id": business_connection_id,
@@ -451,14 +463,28 @@ class BotService:
     async def handle_business_message(self, message: dict, *, source: str = "business_message") -> None:
         from_user = message.get("from", {})
         if from_user.get("is_bot") or message.get("sender_business_bot"):
+            self.logger.info("Ignoring business message from bot sender. source=%s", source)
             return
         business_connection_id = message.get("business_connection_id")
         chat_id = (message.get("chat") or {}).get("id")
         sender_telegram_id = from_user.get("id")
         if not business_connection_id or chat_id is None or sender_telegram_id is None:
+            self.logger.info(
+                "Ignoring business message with missing fields: source=%s connection=%s chat_id=%s sender_id=%s",
+                source,
+                business_connection_id,
+                chat_id,
+                sender_telegram_id,
+            )
             return
         owner = await self._resolve_business_connection(business_connection_id)
         if not owner:
+            self.logger.info(
+                "Skipping business message: no resolved owner/scenario for connection=%s chat_id=%s source=%s",
+                business_connection_id,
+                chat_id,
+                source,
+            )
             return
         scenario = owner["scenario"]
         message_dt = self._message_datetime(message)
@@ -469,17 +495,35 @@ class BotService:
                 owner_user_id=owner["owner_user_id"],
                 owner_message_at=message_iso,
             )
+            self.logger.info(
+                "Business message treated as owner activity; timer cleared. connection=%s chat_id=%s owner=%s",
+                business_connection_id,
+                chat_id,
+                owner["owner_telegram_id"],
+            )
             return
         if not owner.get("can_reply"):
             self.logger.info("Business connection %s has no can_reply right.", business_connection_id)
             return
         if not self._scenario_allows_time(scenario, message_dt):
+            self.logger.info(
+                "Business message blocked by schedule rules. connection=%s chat_id=%s scenario_id=%s",
+                business_connection_id,
+                chat_id,
+                scenario["id"],
+            )
             return
         conversation = await self.storage.get_conversation_state(chat_id, owner["owner_user_id"])
         last_bot_reply_at = self._from_iso(conversation.get("last_bot_reply_at")) if conversation else None
         last_owner_message_at = self._from_iso(conversation.get("last_owner_message_at")) if conversation else None
         owner_replied_after_bot = bool(last_bot_reply_at and last_owner_message_at and last_owner_message_at > last_bot_reply_at)
         if last_bot_reply_at and not owner_replied_after_bot and scenario["not_answer_twice"]:
+            self.logger.info(
+                "Business message skipped because repeated replies are disabled. connection=%s chat_id=%s scenario_id=%s",
+                business_connection_id,
+                chat_id,
+                scenario["id"],
+            )
             return
         due_dt = message_dt + timedelta(minutes=int(scenario["steel_pause_minutes"]))
         if last_bot_reply_at and not owner_replied_after_bot and scenario.get("hot_pause_minutes") is not None:
