@@ -487,6 +487,14 @@ class BotService:
             )
             return
         scenario = owner["scenario"]
+        if not (scenario.get("reply_text") or "").strip():
+            self.logger.info(
+                "Business message skipped because scenario_id=%s has empty reply_text. connection=%s chat_id=%s",
+                scenario["id"],
+                business_connection_id,
+                chat_id,
+            )
+            return
         message_dt = self._message_datetime(message)
         message_iso = self._to_iso(message_dt)
         if int(sender_telegram_id) == int(owner["owner_telegram_id"]):
@@ -636,6 +644,15 @@ class BotService:
                         await self.storage.clear_waiting_reply(chat_id=item["chat_id"], owner_user_id=item["owner_user_id"])
                         continue
                     if not self._scenario_allows_time(item, now):
+                        await self.storage.clear_waiting_reply(chat_id=item["chat_id"], owner_user_id=item["owner_user_id"])
+                        continue
+                    if not (item.get("reply_text") or "").strip():
+                        self.logger.info(
+                            "Dropping scheduled auto-reply because scenario_id=%s has empty reply_text. chat_id=%s connection=%s",
+                            item["scenario_id"],
+                            item["chat_id"],
+                            item.get("business_connection_id"),
+                        )
                         await self.storage.clear_waiting_reply(chat_id=item["chat_id"], owner_user_id=item["owner_user_id"])
                         continue
                     sent = await self.telegram.send_message(
