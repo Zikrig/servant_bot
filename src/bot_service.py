@@ -410,7 +410,7 @@ class BotService:
 
     async def _resolve_business_connection(self, business_connection_id: str) -> dict | None:
         cached = await self.storage.get_business_connection(business_connection_id)
-        if cached:
+        if cached and cached.get("can_reply"):
             scenario = await self.storage.get_enabled_scenario(cached["owner_user_id"])
             if scenario:
                 cached["scenario"] = scenario
@@ -420,7 +420,14 @@ class BotService:
                 business_connection_id,
                 cached["owner_user_id"],
             )
+        elif cached:
+            self.logger.info(
+                "Business connection %s cached with can_reply=%s; refreshing from Telegram.",
+                business_connection_id,
+                cached.get("can_reply"),
+            )
         try:
+            self.logger.info("Refreshing business connection %s via getBusinessConnection.", business_connection_id)
             connection = await self.telegram.get_business_connection(business_connection_id)
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("Failed to load business connection %s: %s", business_connection_id, exc)
